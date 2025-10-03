@@ -562,17 +562,40 @@
           </div>
         </div>
 
-        <a href="paper/fast_dllm.pdf" class="button">Paper</a>
+        <a href="paper/fast_dllm_v2.pdf" class="button">Paper</a>
         <a href="https://github.com/NVlabs/Fast-dLLM" class="button">Code</a>
-        <a href="https://huggingface.co/Efficient-Large-Model/Fast_dLLM_1.5B" class="button">Model</a>
+        <a href="https://huggingface.co/Efficient-Large-Model/Fast_dLLM_7B" class="button">Model</a>
     </div>
 
+        <!-- Video demonstration -->
+        <div class="video-container">
+            <video src="asset/demo.mp4"
+                    autoplay
+                    muted
+                    loop
+                    playsinline
+                    controls>
+                Your browser does not support the video tag.
+            </video>
+            <figcaption>
+                Realtime throughput comparison between Fast-dLLM v2 and Qwen2.5-7B-Instruct.
+            </figcaption>
+            </div>
         
         <div class="description-content">
           <h2>About Fast-dLLM v2</h2>
-          <p> Autoregressive (AR) large language models (LLMs) have achieved remarkable performance across a wide range of natural language tasks. However, their inherent sequential decoding limits inference efficiency. In this work, we propose Fast-dLLM v2, a carefully designed block diffusion language model (dLLM) that transforms pretrained AR models into diffusion-style decoders for parallel text generation.
-            Our approach introduces a novel decoding recipe incorporating the block diffusion mechanism and complementary attention mask, which together enable blockwise bidirectional context modeling while preserving the original AR training objectives and performance. To further enhance inference speed, we design a hierarchical caching mechanism: a block-level cache that stores historical context representations and a sub-block level cache that supports efficient parallel decoding within partially generated blocks.
-            Coupled with our parallel decoding pipeline, Fast-dLLM v2 achieves a near 2.5x speedup over standard AR decoding, without compromising generation quality. Extensive experiments demonstrate that Fast-dLLM v2 achieves state-of-the-art trade-offs between efficiency and performance among existing diffusion-based LLMs, marking a significant step toward practical deployment of fast and accurate language models.
+          <p> Autoregressive (AR) large language models (LLMs) have achieved remarkable performance across a wide range of natural language tasks, 
+            yet their inherent sequential decoding limits inference efficiency. In this work, we propose Fast-dLLM v2, a carefully designed block diffusion language model (dLLM) 
+            that efficiently adapts pretrained AR models into dLLMs for parallel text generation, requiring only approximately 1B tokens of fine-tuning. 
+            This represents a 500x reduction in training data compared to full-attention diffusion LLMs such as Dream (580B tokens), 
+            while preserving the original model's performance. 
+            Our approach introduces a novel training recipe that combines a block diffusion mechanism with a complementary attention mask, 
+            enabling blockwise bidirectional context modeling without sacrificing AR training objectives. 
+            To further accelerate decoding, we design a hierarchical caching mechanism: a block-level cache that stores historical context representations across blocks, 
+            and a sub-block cache that enables efficient parallel generation within partially decoded blocks. Coupled with our parallel decoding pipeline, 
+            Fast-dLLM v2 achieves up to 2.5x speedup over standard AR decoding without compromising generation quality. 
+            Extensive experiments across diverse benchmarks demonstrate that Fast-dLLM v2 matches or surpasses AR baselines in accuracy, 
+            while delivering state-of-the-art efficiency among dLLMs - marking a significant step toward the practical deployment of fast and accurate LLMs.
             </p>
         </div>
 
@@ -604,7 +627,9 @@
 
         <div class="description-content">
             <h2>Throughput Comparison</h2>
-              <p> We compares the inference throughput (tokens per second) of different language model variants across two batch sizes (1 and 4) in one A100 GPU. Fast-dLLM v2 (in green) significantly outperforms all baselines, including the original Qwen-2.5-1.5B-Instruct model and previous Fast-dLLM versions (dream and llada). At batch size 1, Fast-dLLM v2 achieves a throughput of 102.5, more than doubling the baseline Qwen2.5. The advantage becomes even more pronounced at batch size 4, where Fast-dLLM v2 reaches 201.0, nearly 2x faster than Qwen2.5 and approximately <strong>6x faster than Fast-dLLM-llada and Fast-dLLM-dream</strong>. These results demonstrate the efficiency and scalability of the proposed parallel decoding approach in Fast-dLLM v2.
+              <p> We compare the inference throughput (tokens per second) and GSM8K accuracy of various language model variants on a single A100 GPU. <strong>Fast-dLLM v2 (7B, green)</strong> 
+                significantly outperforms all baselines in both efficiency and accuracy. In panel (a), Fast-dLLM v2 achieves <strong>2.54× higher throughput</strong> than Qwen2.5-7B-Instruct 
+                while improving accuracy by <strong>5.2%</strong> over Fast-dLLM-LLaDA. In panel (b), Fast-dLLM v2 demonstrates strong scalability, with throughput increasing from 102.5 tokens/sec at batch size 1 to 217.5 tokens/sec at batch size 4—substantially higher than Qwen2.5 and earlier Fast-dLLM variants (Dream and LLaDA). These results highlight the effectiveness of Fast-dLLM v2’s parallel decoding optimizations.
               </p>
           </div>
           <div style="width: 100%; display: flex; justify-content: center;">
@@ -618,7 +643,13 @@
 
         <div class="description-content">
             <h2>Benchmark Results</h2>
-            We presents a comprehensive evaluation of Fast-dLLM v2 against several baseline models across a range of code, math, and instruction following benchmarks. Among 1B-scale models, Fast-dLLM v2 consistently outperforms others, achieving the highest average score of 43.5, demonstrating strong capabilities across coding tasks (HumanEval, MBPP), math (GSM8K, Math), and other benchmarks (IFEval, MMLU, GPQA). Notably, Fast-dLLM v2 <strong>maintains competitive performance while using significantly fewer parameters than the larger 7B+ models</strong>, further validating the efficiency and effectiveness of its block diffusion-based decoding approach.
+            We present a comprehensive benchmark comparison of Fast-dLLM v2 against several baseline models across a diverse set of tasks, including code generation (HumanEval, MBPP), mathematical reasoning (GSM8K, Math), instruction following (IFEval), and knowledge-intensive QA (MMLU, GPQA).
+
+In the 1B-scale group, Fast-dLLM v2 (1.5B) achieves the highest average score of 45.0, outperforming all other models.
+In the 7B+ group, Fast-dLLM v2 (7B) also attains the highest overall average score of 60.3, surpassing larger models such as LLaDA-MoE, Dream, and Qwen2.5-7B variants.
+
+Notably, Qwen2.5-Nemo-FT models refer to autoregressive (AR) baselines fine-tuned on the same training data as Fast-dLLM v2, providing a fair comparison under equivalent data conditions.
+These results demonstrate that Fast-dLLM v2 not only <strong>scales effectively but also delivers state-of-the-art performance and efficiency</strong>, validating the strength of its block diffusion-based decoding approach across model sizes and tasks.
         </div>
           <div>
             <img src="asset/benchmark_results.png" alt="Benchmark results." class="inserted-image">
