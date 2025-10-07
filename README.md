@@ -149,6 +149,15 @@ If you find this work useful, please cite our paper:
       primaryClass={cs.CL},
       url={https://arxiv.org/abs/2505.22618}, 
 }
+@misc{wu2025fastdllmv2efficientblockdiffusion,
+    title={Fast-dLLM v2: Efficient Block-Diffusion LLM}, 
+    author={Chengyue Wu and Hao Zhang and Shuchen Xue and Shizhe Diao and Yonggan Fu and Zhijian Liu and Pavlo Molchanov and Ping Luo and Song Han and Enze Xie},
+    year={2025},
+    eprint={2509.26328},
+    archivePrefix={arXiv},
+    primaryClass={cs.CL},
+    url={https://arxiv.org/abs/2509.26328}, 
+}
 ```
 
 ## Acknowledgements
