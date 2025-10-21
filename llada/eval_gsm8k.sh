@@ -22,8 +22,8 @@ eval_gsm8k() {
         limit_arg="--limit ${limit}"
     fi
     
-    # dual cache+parallel factor
-    accelerate launch eval_llada.py --tasks ${task} --num_fewshot ${num_fewshot} ${limit_arg} --output_path ${output_path}\
+    # H100 optimized: use mixed precision (bfloat16) and enable flash attention
+    accelerate launch --mixed_precision bf16 --dynamo_backend inductor eval_llada.py --tasks ${task} --num_fewshot ${num_fewshot} ${limit_arg} --output_path ${output_path}\
         --confirm_run_unsafe_code --model llada_dist \
         --model_args model_path=${model_path},gen_length=${length},steps=${steps},block_length=${block_length},use_cache=True,dual_cache=True,factor=${factor},show_speed=True
 }
