@@ -650,23 +650,38 @@ class Fast_dLLM_QwenForCausalLM(Fast_dLLM_QwenPreTrainedModel, GenerationMixin):
 
     @torch.no_grad()
     def generate(
-        self,
-        input_ids,
-        max_new_tokens, 
-        mask_id=151665,
-        threshold=1,
-        small_block_size=8,
-        block_size=32,
-        stop_token=151645,
-        stopping_criteria=None,
-        top_p=0.95,
-        temperature=0,
-        use_block_cache=False,
-        use_old_method=False,
-        **kwargs
-    ):
+            self,
+            input_ids,
+            max_new_tokens, 
+            mask_id=151665,
+            threshold=0.9,
+            small_block_size=8,
+            block_size=32,
+            stop_token=151645,
+            stopping_criteria=None,
+            top_p=0.95,
+            temperature=1.0,
+            use_block_cache=False,
+            use_old_method=False,
+            debug=False,
+            **kwargs
+        ):
+        if use_old_method:
+            return self.gen_old(input_ids, max_new_tokens, mask_id, threshold, small_block_size, block_size, stop_token, top_p, temperature, use_block_cache, use_old_method, debug)
+        else:
+            return self.gen_new(input_ids, max_new_tokens, mask_id, threshold, small_block_size, block_size, stop_token, top_p, temperature, use_block_cache, use_old_method, debug)
+    
+    def gen_new(self, input_ids, max_new_tokens, mask_id, threshold, small_block_size, block_size, stop_token, top_p, temperature, use_block_cache, use_old_method, debug):
+        return NotImplementedError("New generation method is not implemented yet.")
+    
+    
+    def gen_old(self, input_ids, max_new_tokens, mask_id, threshold, small_block_size, block_size, stop_token, top_p, temperature, use_block_cache, use_old_method, debug):
         num_blocks = max_new_tokens // block_size
         original_input_length = input_ids.shape[1]
+
+        if debug:
+            method_label = "OLD" if use_old_method else "NEW"
+            print(f"[generate] Using {method_label} method")
 
         if input_ids.shape[1] > block_size:
             output = self.forward(input_ids=input_ids[:, :(input_ids.shape[1] // block_size * block_size)], use_cache=True, update_past_key_values=True, block_size=block_size)
@@ -679,6 +694,7 @@ class Fast_dLLM_QwenForCausalLM(Fast_dLLM_QwenPreTrainedModel, GenerationMixin):
 
         num_small_blocks = block_size // small_block_size
 
+
         for block_idx in range(num_blocks):
             if stop_token in input_ids[:, original_input_length:]:
                 break
@@ -689,7 +705,60 @@ class Fast_dLLM_QwenForCausalLM(Fast_dLLM_QwenPreTrainedModel, GenerationMixin):
 
             x_t = x_init.clone()
             block_past_key_values = None
-            x_t = self.process_while_block(mask_id, threshold, small_block_size, block_size, stop_token, top_p, temperature, use_block_cache, past_key_values, num_small_blocks, prompt_length, x_t, block_past_key_values) if use_old_method else self.process_while_block_old(mask_id, threshold, small_block_size, block_size, stop_token, top_p, temperature, use_block_cache, past_key_values, num_small_blocks, prompt_length, x_t, block_past_key_values)
+            while True:
+                if stop_token in x_t[:, prompt_length:]:
+                    stop_token_idx = (x_t[:, prompt_length:] == stop_token).nonzero()[0][1]
+                    if (x_t[:, prompt_length:prompt_length+stop_token_idx] == mask_id).sum() == 0:
+                        break
+                mask_idx = (x_t[:, -block_size:] == mask_id)
+                # Decode a complete block, update cache, and generate the next token
+                if mask_idx.sum() == 0:
+                    output = self.forward(input_ids=x_t[:, -block_size:], use_cache=True, past_key_values=past_key_values, update_past_key_values=True, block_size=block_size)
+                    logits, past_key_values = output.logits, output.past_key_values
+                    next_token = logits[:, -1:, :].argmax(dim=-1)
+                    x_t = torch.cat([x_t, next_token], dim=1)
+                    break
+                for small_block_idx in range(num_small_blocks):
+                    small_block_start_idx = small_block_idx * small_block_size
+                    small_block_end_idx = small_block_start_idx + small_block_size
+
+                    start = -block_size + small_block_start_idx
+                    end = None if block_size == small_block_end_idx else -block_size + small_block_end_idx
+                    while True:
+                        mask_idx = (x_t[:, -block_size:] == mask_id)
+                        if mask_idx[:, start:end].sum() == 0:
+                            break
+                        if stop_token in x_t[:, prompt_length:]:
+                            stop_token_idx = (x_t[:, prompt_length:] == stop_token).nonzero()[0][1]
+                            if (x_t[:, prompt_length:prompt_length+stop_token_idx] == mask_id).sum() == 0:
+                                break
+
+                        if use_block_cache:
+                            if block_past_key_values is None or (x_t[:, -block_size+small_block_start_idx] == mask_id).any():
+                                output = self.forward(input_ids=x_t[:, -block_size:], use_cache=True, past_key_values=past_key_values, update_past_key_values=False, use_block_cache=True)
+                                logits, block_past_key_values = output.logits, output.block_past_key_values
+                                logits = torch.cat([logits[:, :1, :], logits[:, :-1, :]], dim=1)
+                                logits = logits[:, start:end]
+                            else:
+                                logits = self.forward(input_ids=x_t[:,start:end], use_cache=True, past_key_values=past_key_values, update_past_key_values=False, use_block_cache=True, block_past_key_values=block_past_key_values, replace_position=small_block_start_idx).logits
+                                logits = torch.cat([logits[:, :1, :], logits[:, :-1, :]], dim=1)
+                        else:
+                            logits = self.forward(input_ids=x_t[:, -block_size:], use_cache=True, past_key_values=past_key_values, update_past_key_values=False).logits
+                            logits = torch.cat([logits[:, :1, :], logits[:, :-1, :]], dim=1)
+                            logits = logits[:, start:end]
+
+
+                        x_1, p_1t = self.sample_with_top_p(logits, top_p=top_p, temperature=temperature)
+                        # Select tokens with probability greater than threshold from p_1t
+                        x1_p = torch.squeeze(torch.gather(p_1t, dim=-1, index=torch.unsqueeze(x_1, -1)), -1)
+                        x1_p = torch.where(mask_idx[:, start:end], x1_p, -torch.inf)
+
+                        unmask_idx = (x1_p > threshold)
+                        max_prob_idx = x1_p.argmax(dim=-1)
+                        unmask_idx[torch.arange(x_1.shape[0]), max_prob_idx] = True
+                        unmask_idx = unmask_idx & mask_idx[:, start:end]
+
+                        x_t[:, start:end][unmask_idx] = x_1[unmask_idx]
 
             input_ids = x_t
         # Truncate stop_token
@@ -697,180 +766,18 @@ class Fast_dLLM_QwenForCausalLM(Fast_dLLM_QwenPreTrainedModel, GenerationMixin):
             stop_token_idx = (input_ids[:, original_input_length:] == stop_token).nonzero()[0][1]
             input_ids = input_ids[:, :stop_token_idx+original_input_length+1]
         return input_ids
-
-
-    def process_while_block(self, mask_id, threshold, small_block_size, block_size, stop_token, top_p, temperature, use_block_cache, past_key_values, num_small_blocks, prompt_length, x_t, block_past_key_values):
-        while True:
-            # Check for stop token completion
-            if stop_token in x_t[:, prompt_length:]:
-                stop_token_idx = (x_t[:, prompt_length:] == stop_token).nonzero()[0][1]
-                if (x_t[:, prompt_length:prompt_length+stop_token_idx] == mask_id).sum() == 0:
-                    break
-            
-            mask_idx = (x_t[:, -block_size:] == mask_id)
-            
-            # If no mask tokens left, finalize the block
-            if mask_idx.sum() == 0:
-                output = self.forward(input_ids=x_t[:, -block_size:], use_cache=True, past_key_values=past_key_values, update_past_key_values=True, block_size=block_size)
-                logits, past_key_values = output.logits, output.past_key_values
-                next_token = logits[:, -1:, :].argmax(dim=-1)
-                x_t = torch.cat([x_t, next_token], dim=1)
-                break
-            
-            # === KEY INSIGHT: Compute confidence for ALL small blocks, then select the best one ===
-            
-            # Get logits for the entire block
-            if use_block_cache:
-                if block_past_key_values is None:
-                    output = self.forward(input_ids=x_t[:, -block_size:], use_cache=True, past_key_values=past_key_values, update_past_key_values=False, use_block_cache=True)
-                    logits, block_past_key_values = output.logits, output.block_past_key_values
-                else:
-                    # For efficiency, recompute full block logits periodically
-                    output = self.forward(input_ids=x_t[:, -block_size:], use_cache=True, past_key_values=past_key_values, update_past_key_values=False, use_block_cache=True)
-                    logits, block_past_key_values = output.logits, output.block_past_key_values
-            else:
-                logits = self.forward(input_ids=x_t[:, -block_size:], use_cache=True, past_key_values=past_key_values, update_past_key_values=False).logits
-            
-            # Shift logits (causal LM adjustment)
-            logits = torch.cat([logits[:, :1, :], logits[:, :-1, :]], dim=1)
-            
-            # Sample tokens and compute probabilities for the ENTIRE block
-            full_block_x_1, full_block_p_1t = self.sample_with_top_p(logits, top_p=top_p, temperature=temperature)
-            full_block_x1_p = torch.squeeze(torch.gather(full_block_p_1t, dim=-1, index=torch.unsqueeze(full_block_x_1, -1)), -1)
-            
-            # Zero out probabilities for already-unmasked positions
-            full_block_x1_p = torch.where(mask_idx, full_block_x1_p, -torch.inf)
-            
-            # === Compute confidence score for each small block ===
-            small_block_scores = []
-            for small_block_idx in range(num_small_blocks):
-                start_idx = small_block_idx * small_block_size
-                end_idx = start_idx + small_block_size
-                
-                # Get probabilities for this small block
-                small_block_probs = full_block_x1_p[:, start_idx:end_idx]
-                small_block_mask = mask_idx[:, start_idx:end_idx]
-                
-                # Skip if no masked tokens in this block
-                if small_block_mask.sum() == 0:
-                    small_block_scores.append(-torch.inf)
-                    continue
-                
-                # Compute aggregate confidence score:
-                masked_probs = small_block_probs[small_block_mask]
-                mean_prob = masked_probs.mean().item() if masked_probs.numel() > 0 else -torch.inf
-
-                # Combined score: prioritize blocks with highest max confidence and many high-conf tokens
-                score = mean_prob
-                small_block_scores.append(score)
-            
-            # === Select the small block with highest confidence ===
-            best_small_block_idx = torch.tensor(small_block_scores).argmax().item()
-            
-            # Process the selected small block
-            start_idx = best_small_block_idx * small_block_size
-            end_idx = start_idx + small_block_size
-            
-            # Extract the small block logits and predictions
-            small_block_x_1 = full_block_x_1[:, start_idx:end_idx]
-            small_block_x1_p = full_block_x1_p[:, start_idx:end_idx]
-            small_block_mask = mask_idx[:, start_idx:end_idx]
-            
-            # Determine which tokens to unmask in this small block
-            unmask_idx = (small_block_x1_p > threshold)
-            
-            # Ensure at least one token is unmasked (the highest confidence one)
-            if unmask_idx.sum() == 0 and small_block_mask.sum() > 0:
-                max_prob_idx = small_block_x1_p.argmax(dim=-1)
-                unmask_idx[torch.arange(small_block_x_1.shape[0]), max_prob_idx] = True
-            
-            # Only unmask positions that are currently masked
-            unmask_idx = unmask_idx & small_block_mask
-            
-            # Update the tokens - FIX: Use proper indexing with start_idx and end_idx
-            if unmask_idx.sum() > 0:
-                # Calculate absolute positions in x_t
-                block_start = x_t.shape[1] - block_size
-                abs_start = block_start + start_idx
-                abs_end = block_start + end_idx
-                
-                # Update using absolute indexing
-                x_t[:, abs_start:abs_end][unmask_idx] = small_block_x_1[unmask_idx]
-                # print(f"Unmasked {unmask_idx.sum().item()} tokens in small block {best_small_block_idx} (positions {start_idx}-{end_idx}, score: {small_block_scores[best_small_block_idx]:.4f})")
-            
-            # Invalidate block cache if using it (since we modified the block)
-            if use_block_cache and unmask_idx.sum() > 0:
-                block_past_key_values = None
-        
-        return x_t
-
-
-
-
-    def process_while_block_old(self, mask_id, threshold, small_block_size, block_size, stop_token, top_p, temperature, use_block_cache, past_key_values, num_small_blocks, prompt_length, x_t, block_past_key_values):
-        while True:
-            if stop_token in x_t[:, prompt_length:]:
-                stop_token_idx = (x_t[:, prompt_length:] == stop_token).nonzero()[0][1]
-                if (x_t[:, prompt_length:prompt_length+stop_token_idx] == mask_id).sum() == 0:
-                    break
-            mask_idx = (x_t[:, -block_size:] == mask_id)
-                # Decode a complete block, update cache, and generate the next token
-            if mask_idx.sum() == 0: # no mask token in the block, then done, so update cache and break
-                output = self.forward(input_ids=x_t[:, -block_size:], use_cache=True, past_key_values=past_key_values, update_past_key_values=True, block_size=block_size)
-                logits, past_key_values = output.logits, output.past_key_values
-                next_token = logits[:, -1:, :].argmax(dim=-1)
-                x_t = torch.cat([x_t, next_token], dim=1)
-                break
-            for small_block_idx in range(num_small_blocks): # num_small_blocks is per block
-                small_block_start_idx = small_block_idx * small_block_size
-                small_block_end_idx = small_block_start_idx + small_block_size
-
-                start = -block_size + small_block_start_idx
-                end = None if block_size == small_block_end_idx else -block_size + small_block_end_idx
-                while True:
-                    mask_idx = (x_t[:, -block_size:] == mask_id)
-                    if mask_idx[:, start:end].sum() == 0: # if all not masked, done 
-                        break
-                    if stop_token in x_t[:, prompt_length:]: # if stop_token in the block, done
-                        stop_token_idx = (x_t[:, prompt_length:] == stop_token).nonzero()[0][1]
-                        if (x_t[:, prompt_length:prompt_length+stop_token_idx] == mask_id).sum() == 0:
-                            break
-
-                    if use_block_cache: 
-                        if block_past_key_values is None or (x_t[:, -block_size+small_block_start_idx] == mask_id).any():
-                            output = self.forward(input_ids=x_t[:, -block_size:], use_cache=True, past_key_values=past_key_values, update_past_key_values=False, use_block_cache=True)
-                            logits, block_past_key_values = output.logits, output.block_past_key_values
-                            logits = torch.cat([logits[:, :1, :], logits[:, :-1, :]], dim=1)
-                            logits = logits[:, start:end]
-                        else:
-                            logits = self.forward(input_ids=x_t[:,start:end], use_cache=True, past_key_values=past_key_values, update_past_key_values=False, use_block_cache=True, block_past_key_values=block_past_key_values, replace_position=small_block_start_idx).logits
-                            logits = torch.cat([logits[:, :1, :], logits[:, :-1, :]], dim=1)
-                    else:
-                        logits = self.forward(input_ids=x_t[:, -block_size:], use_cache=True, past_key_values=past_key_values, update_past_key_values=False).logits
-                        logits = torch.cat([logits[:, :1, :], logits[:, :-1, :]], dim=1)
-                        # check = True
-                        # if check:
-                        #     full_block_x_1, full_block_p_1t = self.sample_with_top_p(logits, top_p=top_p, temperature=temperature)
-                        #     full_block_x1_p = torch.squeeze(torch.gather(full_block_p_1t, dim=-1, index=torch.unsqueeze(full_block_x_1, -1)), -1)
-                        #     if (full_block_x1_p[:,end:] > threshold).sum() > 0:
-                        #         print("Warning: some tokens in the full block are above the threshold, consider increasing the threshold or decreasing the block size") 
-
-                        logits = logits[:, start:end] # small block logits
-
-
-                    x_1, p_1t = self.sample_with_top_p(logits, top_p=top_p, temperature=temperature)
-                        # Select tokens with probability greater than threshold from p_1t
-                    x1_p = torch.squeeze(torch.gather(p_1t, dim=-1, index=torch.unsqueeze(x_1, -1)), -1)
-                    x1_p = torch.where(mask_idx[:, start:end], x1_p, -torch.inf)
-
-                    unmask_idx = (x1_p > threshold)
-                    max_prob_idx = x1_p.argmax(dim=-1)
-                    unmask_idx[torch.arange(x_1.shape[0]), max_prob_idx] = True
-                    unmask_idx = unmask_idx & mask_idx[:, start:end]
-
-                    x_t[:, start:end][unmask_idx] = x_1[unmask_idx]
-        return x_t
-
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
+    
     def sample_with_top_p(self, logits, top_p=0.95, temperature=1.0):
         # Calculate probabilities
         if temperature > 0:

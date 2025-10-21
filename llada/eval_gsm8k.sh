@@ -1,56 +1,35 @@
+#!/bin/bash
+
 # Set the environment variables first before running the command.
 export HF_ALLOW_CODE_EVAL=1
 export HF_DATASETS_TRUST_REMOTE_CODE=true
 
-task=gsm8k
-length=256
-block_length=32
-num_fewshot=5
-steps=$((length / block_length))
-factor=1.0
-model_path='GSAI-ML/LLaDA-8B-Instruct'
-# You can change the model path to LLaDA-1.5 by setting model_path='GSAI-ML/LLaDA-1.5'
-
-
-# baseline
-accelerate launch eval_llada.py --tasks ${task} --num_fewshot ${num_fewshot} \
---confirm_run_unsafe_code --model llada_dist \
---model_args model_path=${model_path},gen_length=${length},steps=${length},block_length=${block_length},show_speed=True 
-
-
-# prefix cache
-accelerate launch eval_llada.py --tasks ${task} --num_fewshot ${num_fewshot} \
---confirm_run_unsafe_code --model llada_dist \
---model_args model_path=${model_path},gen_length=${length},steps=${length},block_length=${block_length},use_cache=True,show_speed=True 
-
-
-# parallel
-accelerate launch eval_llada.py --tasks ${task} --num_fewshot ${num_fewshot} \
---confirm_run_unsafe_code --model llada_dist \
---model_args model_path=${model_path},gen_length=${length},steps=${steps},block_length=${block_length},threshold=0.9,show_speed=True
-
-# parallel factor
-accelerate launch eval_llada.py --tasks ${task} --num_fewshot ${num_fewshot} \
---confirm_run_unsafe_code --model llada_dist \
---model_args model_path=${model_path},gen_length=${length},steps=${steps},block_length=${block_length},factor=${factor},show_speed=True
-
-
-# prefix cache+parallel
-accelerate launch eval_llada.py --tasks ${task} --num_fewshot ${num_fewshot} \
---confirm_run_unsafe_code --model llada_dist \
---model_args model_path=${model_path},gen_length=${length},steps=${steps},block_length=${block_length},use_cache=True,threshold=0.9,show_speed=True
-
-# dual cache+parallel
-accelerate launch eval_llada.py --tasks ${task} --num_fewshot ${num_fewshot} \
---confirm_run_unsafe_code --model llada_dist \
---model_args model_path=${model_path},gen_length=${length},steps=${steps},block_length=${block_length},use_cache=True,dual_cache=True,threshold=0.9,show_speed=True
-
-# prefix cache+parallel factor
-accelerate launch eval_llada.py --tasks ${task} --num_fewshot ${num_fewshot} \
---confirm_run_unsafe_code --model llada_dist \
---model_args model_path=${model_path},gen_length=${length},steps=${steps},block_length=${block_length},use_cache=True,factor=${factor},show_speed=True
-
-# dual cache+parallel factor
-accelerate launch eval_llada.py --tasks ${task} --num_fewshot ${num_fewshot} \
---confirm_run_unsafe_code --model llada_dist \
---model_args model_path=${model_path},gen_length=${length},steps=${steps},block_length=${block_length},use_cache=True,dual_cache=True,factor=${factor},show_speed=True
+eval_gsm8k() {
+    local task=${1:-gsm8k}
+    local length=${2:-256}
+    local block_length=${3:-32}
+    local num_fewshot=${4:-5}
+    local factor=${5:-1.0}
+    local limit=${6:-0}
+    local model_path=${7:-'GSAI-ML/LLaDA-8B-Instruct'}
+    local output_path=${8:-'results/'}
+    
+    local steps=$((length / block_length))
+    
+    # Build limit argument only if > 0
+    local limit_arg=""
+    if (( $(echo "$limit > 0" | bc -l) )); then
+        limit_arg="--limit ${limit}"
+    fi
+    
+    # dual cache+parallel factor
+    accelerate launch eval_llada.py --tasks ${task} --num_fewshot ${num_fewshot} ${limit_arg} --output_path ${output_path}\
+        --confirm_run_unsafe_code --model llada_dist \
+        --model_args model_path=${model_path},gen_length=${length},steps=${steps},block_length=${block_length},use_cache=True,dual_cache=True,factor=${factor},show_speed=True
+}
+block_lengths=(4 8 16 32 64 128 256)
+limit=0
+# Call the function with default values
+for bl in "${block_lengths[@]}"; do
+    eval_gsm8k "gsm8k" "256" "$bl" "5" "1.0" "$limit" "GSAI-ML/LLaDA-8B-Instruct" "results/"
+done

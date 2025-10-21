@@ -50,6 +50,7 @@ class Fast_dLLMBlockfastEvalHarness(LM):
         use_old_method: bool = False,
         show_outputs: bool = False,
         show_progress: bool = True,
+        debug: bool = False,
         seed: int | None = None,
         **kwargs,
     ) -> None:
@@ -72,6 +73,7 @@ class Fast_dLLMBlockfastEvalHarness(LM):
         self._rank = 0
         self.show_outputs = _to_bool(show_outputs)
         self.show_progress = _to_bool(show_progress)
+        self.debug = _to_bool(debug)
 
         if seed is not None:
             set_seed(int(seed))
@@ -163,6 +165,7 @@ class Fast_dLLMBlockfastEvalHarness(LM):
                 top_p=self.top_p,
                 use_block_cache=self.use_block_cache,
                 use_old_method=self.use_old_method,
+                debug=self.debug,
             )
             if self.device.type == "cuda":
                 torch.cuda.synchronize(self.device)
@@ -211,6 +214,7 @@ def _build_cli_args(namespace, use_old_method: bool) -> List[str]:
         f"use_block_cache={str(namespace.use_block_cache)}",
         f"show_outputs={str(namespace.show_outputs)}",
         f"show_progress={str(not namespace.no_progress_bar)}",
+        f"debug={str(namespace.debug)}",
         "show_speed=True",
     ]
     method_label = "old" if use_old_method else "new"
@@ -234,6 +238,8 @@ def _build_cli_args(namespace, use_old_method: bool) -> List[str]:
         "--output_path",
         str(output_path),
     ]
+    if namespace.limit is not None:
+        args.extend(["--limit", str(namespace.limit)])
     return args
 
 
@@ -254,13 +260,17 @@ def main() -> None:
     parser.add_argument("--show_outputs", action="store_true")
     parser.add_argument("--no_progress_bar", action="store_true")
     parser.add_argument("--output_dir", type=str, default="logs")
+    parser.add_argument("--limit", type=int, default=10)
+    parser.add_argument("--debug", action="store_true")
 
     args = parser.parse_args()
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     args.output_dir = str(output_dir)
+    if args.limit is not None and args.limit <= 0:
+        args.limit = None
 
-    methods = ["old", "new"] if args.methods == "both" else [args.methods]
+    methods = ["new", "old"] if args.methods == "both" else [args.methods]
 
     for method in methods:
         use_old_method = method == "old"
@@ -272,7 +282,7 @@ def main() -> None:
 
         if label:
             print("\n" + "=" * 80)
-            print(f"Running GSM8K with {label} method")
+            print(f"Running GSM8K with {label} method, use_old_method={use_old_method}")
             print("=" * 80 + "\n")
 
         sys.argv = _build_cli_args(args, use_old_method)
